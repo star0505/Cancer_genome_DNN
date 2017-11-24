@@ -15,14 +15,14 @@ config.read('config.cfg')
 
 which_data = config.get('Parameter', 'what_data_use')
 
-data_dir = glob.glob('*' + what_data +'.mat')
+data_dir = glob.glob('*' + which_data +'.mat')
 
 def read_data(path):
     with open(path, 'rb') as f:
         data = pickle.load(f)
     return data
 
-feature = read_data(data_dir[0])
+feature = read_data('ACC_rna.feature')
 cancer_type = read_data('cancer_type')
 
 def cross_validation(cancer_type, data_dir,test_ratio,k):
@@ -31,8 +31,10 @@ def cross_validation(cancer_type, data_dir,test_ratio,k):
 	label = np.zeros([data.shape[0],len(cancer_type)])
 	data = read_data(data_dir[0])
 	train_x = data[:int(len(data))*t1]
-	test_x
+	test_x = data[int(len(data))*t1:]
 	label[:,0] = 1
+	train_y = label[:int(len(label))*t1]
+	test_y = label[int(len(label))*t1:]
 	idx = 0
 	for i,path in enumerate(data_dir[1:]):
 		tmp = read_data(path)
@@ -40,7 +42,20 @@ def cross_validation(cancer_type, data_dir,test_ratio,k):
 		tmp_label = np.zeros([len(tmp), len(cancer_type)])
 		tmp_label[:,i+1] = 1
 		label = np.concatenate((label,tmp_label),axis=0)
-		train_x = np.concatenate((),axis=0)
+		train_x = np.concatenate((train_x,tmp[:int(len(tmp))*t1]),axis=0)
+		test_x = np.concatenate((test_x,tmp[int(len(tmp))*t1:]),axis=0)
+		train_y = np.concatenate((train_y,tmp_label[:int(len(tmp_label))*t1]),axis=0)
+		test_y = np.concatenate((test_y,tmp_label[:int(len(tmp_label))*t1]),axis=0)
+	
+	print("Train: ",len(train_y),"Test: ", len(test_y))
+	return train_x, test_x, train_y, test_y
+
+def random_batch(train_data, train_label, batch_size):
+	idx = np.arange(len(train_x))
+	np.random.shuffle(idx)
+	x = train_data[idx]
+	y = train_label[idx]
+	return x[:batch_size], y[:batch_size]
 
 print("Load Data: ", data.shape)
 print("The # of Cancer Type: ", len(cancer_type))
@@ -58,9 +73,9 @@ y_1 = tf.matmul(x,W1) + b1
 
 W2 = tf.Variable(tf.zeros([d,len(cancer_type)]), name="W2")
 b2 = tf.Variable(tf.zeros(len(cancer_type)), name="b2")
-y_2 = tf.matmul(y_1, W2) +b2
+y_2 = tf.matmul(y_1, W2) +b2 #logits
 softmax_logits = tf.nn.softmax(y_2)
-prediction = tf.argmax(softmax_logits,1)
+prediction = tf.argmax(softmax_logits,1) #return max idx
 correct = tf.equal(prediction, tf.argmax(y,1), name="correct")
 accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
 loss = tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=y_2)
@@ -68,4 +83,36 @@ loss_mean = tf.reduce_mean(loss)
 train_step = tf.train.RMSPropOptimizer(lr, 0.9).minimize(loss_mean)
 
 tf.summary.scalar('loss', loss_mean)
+tf.summary.scalar('accuracy', accuracy)
+merge = tf.summary.merge_all()
 
+saver = tf.train.Saver()
+init = tf.global_variables_initializer()
+sess = tf.Session()
+train_writer = tf.summary.FileWriter(train_log, sess.graph)
+sess.run(init)
+
+total_test_acc = []
+for k in range(int(1/test_ratio)):
+	sess.run(init)
+	train_x, test_x, train_y, test_y = \
+				cross_validation(cancer_type, data_dir,test_ratio,k)
+
+	#Train
+	for i in range(itr):
+		batch_x, batch_y = random_batch(train_x, train_y, N)
+		_, acc, loss, train_sum = \
+				sess.run([train_step, accuracy, loss_mean, merge])
+
+		if i%100 == 0:
+			print("Iteration: ",i,"acc: ", acc, "loss: ", loss)
+			train_writer.acc_summary(train_sum, i)
+
+	#Test
+	test_acc, test_loss, test_pred, test_label, logits = \
+		sess.run([accuracy, loss_mean, prediction, y, y_2],\
+					feed_dict={x:test_x, y:test_y})
+	print("Fold",k,"Test accuracy: ", test_acc, ", loss: ", test_loss, "\n")
+	total_test_acc.append(test_acc)
+
+print("Average Test Accuracy: ", sum(total_test_acc)/len(total_test_acc))

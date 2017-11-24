@@ -1,3 +1,3 @@
 #! /bin/bash
-python config.py
-python NN.py
+python3 config.py
+python3 NN.py
