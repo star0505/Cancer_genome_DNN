@@ -5,17 +5,18 @@ import tensorflow as tf
 import numpy as np
 import pickle
 import glob
-import config
-import ConfigParser
 import pdb
 from tqdm import tqdm
 
-config = ConfigParser.RawConfigParser()
-config.read('config.cfg')
-
-which_data = config.get('Parameter', 'what_data_use')
+#config = ConfigParser.RawConfigParser()
+#config.read('config.cfg')
+which_data = 'rna'
+#which_data = config.get('Parameter', 'what_data_use')
 
 data_dir = glob.glob('*' + which_data +'.mat')
+#data_dir = 'tcga_'+which_data+"final_input.mat"
+#label_dir = 'tcga_'+which_data+"final_label.mat"
+
 
 def read_data(path):
     with open(path, 'rb') as f:
@@ -25,29 +26,32 @@ def read_data(path):
 feature = read_data('ACC_rna.feature')
 cancer_type = read_data('cancer_type')
 
+#data = read_data(data_dir)
+#label = read_data(label_dir)
+
 def cross_validation(cancer_type, data_dir,test_ratio,k):
 	t1 = test_ratio*k
 	t2 = test_ratio*(k+1)
-	label = np.zeros([data.shape[0],len(cancer_type)])
 	data = read_data(data_dir[0])
-	train_x = data[:int(len(data))*t1]
-	test_x = data[int(len(data))*t1:]
+	label = np.zeros([data.shape[0],len(cancer_type)])
+	train_x = data[:int(data.shape[0]*t1)]
+	test_x = data[int(data.shape[0]*t1):]
 	label[:,0] = 1
-	train_y = label[:int(len(label))*t1]
-	test_y = label[int(len(label))*t1:]
+	train_y = label[:int(label.shape[0]*t1)]
+	test_y = label[int(label.shape[0]*t1):]
 	idx = 0
 	for i,path in enumerate(data_dir[1:]):
 		tmp = read_data(path)
 		data = np.concatenate((data,tmp),axis=0)
-		tmp_label = np.zeros([len(tmp), len(cancer_type)])
+		tmp_label = np.zeros([tmp.shape[0], len(cancer_type)])
 		tmp_label[:,i+1] = 1
 		label = np.concatenate((label,tmp_label),axis=0)
-		train_x = np.concatenate((train_x,tmp[:int(len(tmp))*t1]),axis=0)
-		test_x = np.concatenate((test_x,tmp[int(len(tmp))*t1:]),axis=0)
-		train_y = np.concatenate((train_y,tmp_label[:int(len(tmp_label))*t1]),axis=0)
-		test_y = np.concatenate((test_y,tmp_label[:int(len(tmp_label))*t1]),axis=0)
+		train_x = np.concatenate((train_x,tmp[:int(tmp.shape[0]*t1)]),axis=0)
+		test_x = np.concatenate((test_x,tmp[int(tmp.shape[0]*t1):]),axis=0)
+		train_y = np.concatenate((train_y,tmp_label[:int(tmp_label.shape[0]*t1)]),axis=0)
+		test_y = np.concatenate((test_y,tmp_label[:int(tmp_label.shape[0]*t1)]),axis=0)
 	
-	print("Train: ",len(train_y),"Test: ", len(test_y))
+	print("Train: ",train_y.shape,"Test: ", test_y.shape[0])
 	return train_x, test_x, train_y, test_y
 
 def random_batch(train_data, train_label, batch_size):
@@ -57,18 +61,18 @@ def random_batch(train_data, train_label, batch_size):
 	y = train_label[idx]
 	return x[:batch_size], y[:batch_size]
 
-print("Load Data: ", data.shape)
 print("The # of Cancer Type: ", len(cancer_type))
 
 
-N, itr, lr, train_log, d, test_ratio = config.getint('Parameter', 'batch_size'), config.getint('Parameter','iteration'), config.getfloat('Parameter', 'learning_rate'), config.get('Parameter', 'train_dir'), config.getint('Parameter', 'hidden_dim'), config.getfloat('Parameter', 'test_ratio'), config.getboolean('Parameter', 'l2_regularizer_use')
+N, itr, lr, train_log, d, test_ratio = 64, 1000, 0.001, 'train_log',16, 0.2
+#config.getint('Parameter', 'batch_size'), config.getint('Parameter','iteration'), config.getfloat('Parameter', 'learning_rate'), config.get('Parameter', 'train_dir'), config.getint('Parameter', 'hidden_dim'), config.getfloat('Parameter', 'test_ratio'), config.getboolean('Parameter', 'l2_regularizer_use')
 g_step = tf.Variable(0)
 lr = tf.train.exponential_decay(lr, g_step, 100, 0.98)
 x = tf.placeholder(tf.float32, [None, len(feature)], name="x")
 y = tf.placeholder(tf.int32, [None, len(cancer_type)],name="y")
 
 W1 = tf.Variable(tf.zeros([len(feature),d]), name='W1')
-b1 = tf.Variable(tf.zeros(b), name="b")
+b1 = tf.Variable(tf.zeros(d), name="b")
 y_1 = tf.matmul(x,W1) + b1
 
 W2 = tf.Variable(tf.zeros([d,len(cancer_type)]), name="W2")
