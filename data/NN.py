@@ -13,7 +13,7 @@ from tqdm import tqdm
 which_data = 'rna'
 #which_data = config.get('Parameter', 'what_data_use')
 
-data_dir = glob.glob('*' + which_data +'.mat')
+data_dir = glob.glob('*_' + which_data +'.mat')
 #data_dir = 'tcga_'+which_data+"final_input.mat"
 #label_dir = 'tcga_'+which_data+"final_label.mat"
 
@@ -34,10 +34,10 @@ def cross_validation(cancer_type, data_dir,test_ratio,k):
 	t2 = test_ratio*(k+1)
 	data = read_data(data_dir[0])
 	label = np.zeros([data.shape[0],len(cancer_type)])
-	train_x = data[:int(data.shape[0]*t1)]
-	test_x = data[int(data.shape[0]*t1):]
+	train_x = np.concatenate((data[:int(data.shape[0]*t1)],data[int(data.shape[0]*t2):]),axis=0)
+	test_x = data[int(data.shape[0]*t1):int(data.shape[0]*t2)]
 	label[:,0] = 1
-	train_y = label[:int(label.shape[0]*t1)]
+	train_y = np.concatenate((label[:int(label.shape[0]*t1)], label[int(label.shape[0]*t2):]),axis=0)
 	test_y = label[int(label.shape[0]*t1):]
 	idx = 0
 	for i,path in enumerate(data_dir[1:]):
@@ -46,16 +46,19 @@ def cross_validation(cancer_type, data_dir,test_ratio,k):
 		tmp_label = np.zeros([tmp.shape[0], len(cancer_type)])
 		tmp_label[:,i+1] = 1
 		label = np.concatenate((label,tmp_label),axis=0)
-		train_x = np.concatenate((train_x,tmp[:int(tmp.shape[0]*t1)]),axis=0)
-		test_x = np.concatenate((test_x,tmp[int(tmp.shape[0]*t1):]),axis=0)
-		train_y = np.concatenate((train_y,tmp_label[:int(tmp_label.shape[0]*t1)]),axis=0)
-		test_y = np.concatenate((test_y,tmp_label[:int(tmp_label.shape[0]*t1)]),axis=0)
+		train_tmp = np.concatenate((tmp[:int(tmp.shape[0]*t1)],tmp[int(tmp.shape[0]*t2):]),axis=0)
+		train_x = np.concatenate((train_x,train_tmp),axis=0)
+		test_x = np.concatenate((test_x,tmp[int(tmp.shape[0]*t1):int(tmp.shape[0]*t2)]),axis=0)
+		
+		train_tmpy = np.concatenate((tmp_label[:int(tmp_label.shape[0]*t1)],tmp_label[int(tmp_label.shape[0]*t2):]),axis=0)
+		train_y = np.concatenate((train_y,train_tmpy),axis=0)
+		test_y = np.concatenate((test_y,tmp_label[int(tmp_label.shape[0]*t1):int(tmp_label.shape[0]*t2)]),axis=0)
 	
-	print("Train: ",train_y.shape,"Test: ", test_y.shape[0])
+	print("Train: ",train_x.shape,"Test: ", test_x.shape[0])
 	return train_x, test_x, train_y, test_y
 
 def random_batch(train_data, train_label, batch_size):
-	idx = np.arange(len(train_x))
+	idx = np.arange(len(train_data))
 	np.random.shuffle(idx)
 	x = train_data[idx]
 	y = train_label[idx]
@@ -64,7 +67,7 @@ def random_batch(train_data, train_label, batch_size):
 print("The # of Cancer Type: ", len(cancer_type))
 
 
-N, itr, lr, train_log, d, test_ratio = 64, 1000, 0.001, 'train_log',16, 0.2
+N, itr, lr, d, test_ratio = 64, 1000, 0.001, 16, 0.2
 #config.getint('Parameter', 'batch_size'), config.getint('Parameter','iteration'), config.getfloat('Parameter', 'learning_rate'), config.get('Parameter', 'train_dir'), config.getint('Parameter', 'hidden_dim'), config.getfloat('Parameter', 'test_ratio'), config.getboolean('Parameter', 'l2_regularizer_use')
 g_step = tf.Variable(0)
 lr = tf.train.exponential_decay(lr, g_step, 100, 0.98)
@@ -85,15 +88,9 @@ accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
 loss = tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=y_2)
 loss_mean = tf.reduce_mean(loss)
 train_step = tf.train.RMSPropOptimizer(lr, 0.9).minimize(loss_mean)
-
-tf.summary.scalar('loss', loss_mean)
-tf.summary.scalar('accuracy', accuracy)
-merge = tf.summary.merge_all()
-
 saver = tf.train.Saver()
 init = tf.global_variables_initializer()
 sess = tf.Session()
-train_writer = tf.summary.FileWriter(train_log, sess.graph)
 sess.run(init)
 
 total_test_acc = []
@@ -101,16 +98,14 @@ for k in range(int(1/test_ratio)):
 	sess.run(init)
 	train_x, test_x, train_y, test_y = \
 				cross_validation(cancer_type, data_dir,test_ratio,k)
-
 	#Train
 	for i in range(itr):
 		batch_x, batch_y = random_batch(train_x, train_y, N)
-		_, acc, loss, train_sum = \
-				sess.run([train_step, accuracy, loss_mean, merge])
+		_, acc, loss= sess.run([train_step, accuracy, loss_mean],\
+					feed_dict={x:batch_x, y:batch_y})
 
 		if i%100 == 0:
 			print("Iteration: ",i,"acc: ", acc, "loss: ", loss)
-			train_writer.acc_summary(train_sum, i)
 
 	#Test
 	test_acc, test_loss, test_pred, test_label, logits = \
